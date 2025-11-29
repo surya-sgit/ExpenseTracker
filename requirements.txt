@@ -1,4 +1,9 @@
+streamlit
+google-genai
+mcp
 fastmcp
-psycopg2-binary
+pandas
+plotly
 python-dotenv
+psycopg2-binary
 uvicorn

@@ -36,7 +36,7 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Update this with your specific FastMCP URL (ensure it ends in /sse)
-SERVER_URL = "https://expensetracking.fastmcp.app/sse" 
+SERVER_URL = "https://expensetracker-backend-cjxj.onrender.com/sse" 
 
 if not API_KEY or not DATABASE_URL:
     st.error("Critical Error: Missing configuration secrets (GOOGLE_API_KEY or DATABASE_URL).")
