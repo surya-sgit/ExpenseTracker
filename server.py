@@ -1,17 +1,21 @@
-import sqlite3
-import json
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Initialize Server
-mcp = FastMCP("Expense Tracker Secure")
-DB_FILE = "expenses.db"
+mcp = FastMCP("Expense Tracker Cloud")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # --- HELPER: Database Connection ---
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row # Allows accessing columns by name
-    return conn
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL is missing! Check your Secrets.")
+    return psycopg2.connect(DATABASE_URL)
 
 # --- INIT: Create Table ---
 def init_db():
@@ -19,111 +23,93 @@ def init_db():
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS expenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             amount REAL,
             main_category TEXT,
             sub_category TEXT,
             description TEXT,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            date DATE DEFAULT CURRENT_DATE
         )
     ''')
     conn.commit()
     conn.close()
 
-init_db()
+# Run init on startup
+try:
+    init_db()
+except Exception as e:
+    print(f"DB Init Warning: {e}")
 
-# --- TOOL 1: THE SECURE ANALYST (Read-Only SQL) ---
+# --- TOOL 1: ANALYST (Read-Only) ---
 @mcp.tool()
 def analyze_database(query: str) -> str:
-    """
-    Runs a READ-ONLY SQL query to answer questions.
-    Table: 'expenses'. Columns: id, amount, main_category, sub_category, description, date.
-    """
-    cleaned_query = query.strip().upper()
-    
-    # SECURITY LAYER 1: Block destructive commands
-    if not cleaned_query.startswith("SELECT"):
-        return "❌ SECURITY BLOCK: This tool allows READ-ONLY access (SELECT) only."
-
-    # SECURITY LAYER 2: Prevent Data Dumping
-    if "LIMIT" not in cleaned_query:
-        query += " LIMIT 20"
+    """Read-only SQL analysis. Table: expenses."""
+    cleaned = query.strip().upper()
+    if not cleaned.startswith("SELECT"): return "❌ Error: Read-only access."
+    if "LIMIT" not in cleaned: query += " LIMIT 20"
 
     try:
         conn = get_db_connection()
-        c = conn.cursor()
+        c = conn.cursor(cursor_factory=RealDictCursor)
         c.execute(query)
         rows = c.fetchall()
         conn.close()
         
-        if not rows:
-            return "No results found."
+        if not rows: return "No results."
         
-        # Format results nicely
-        results = f"🔍 Query Result ({len(rows)} rows):\n"
-        columns = rows[0].keys()
-        results += " | ".join(columns) + "\n"
-        results += "-" * 50 + "\n"
-        
-        for row in rows:
-            row_str = " | ".join(str(row[col]) for col in columns)
-            results += row_str + "\n"
-            
+        results = f"🔍 Found {len(rows)} rows:\n"
+        if rows:
+            cols = rows[0].keys()
+            results += " | ".join(cols) + "\n" + "-"*50 + "\n"
+            for row in rows:
+                results += " | ".join(str(row[c]) for c in cols) + "\n"
         return results
-
     except Exception as e:
-        return f"❌ SQL Error: {str(e)}"
+        return f"❌ SQL Error: {e}"
 
-# --- TOOL 2: ADD (Safe Structured Input) ---
+# --- TOOL 2: ADD ---
 @mcp.tool()
 def add_expense(amount: float, main_category: str, sub_category: str, description: str, date: str = None) -> str:
-    """Records a new expense. Date format: YYYY-MM-DD."""
+    """Records expense. Date: YYYY-MM-DD."""
     conn = get_db_connection()
     c = conn.cursor()
+    if not date: date = datetime.now().strftime("%Y-%m-%d")
     
-    # Default to Today if no date provided
-    if not date: 
-        date = datetime.now().strftime("%Y-%m-%d")
-        
-    c.execute("INSERT INTO expenses (amount, main_category, sub_category, description, date) VALUES (?, ?, ?, ?, ?)", 
+    c.execute("INSERT INTO expenses (amount, main_category, sub_category, description, date) VALUES (%s, %s, %s, %s, %s) RETURNING id", 
               (amount, main_category, sub_category, description, date))
-    eid = c.lastrowid
+    eid = c.fetchone()[0]
     conn.commit()
     conn.close()
-    return f"✅ Saved ID #{eid}: ₹{amount} for {description} on {date}"
+    return f"✅ Saved ID #{eid}: ₹{amount} for {description}"
 
-# --- TOOL 3: DELETE (Requires ID) ---
+# --- TOOL 3: DELETE ---
 @mcp.tool()
 def delete_expense(expense_id: int) -> str:
-    """Permanently deletes an expense by its numeric ID."""
+    """Deletes expense by ID."""
     conn = get_db_connection()
     c = conn.cursor()
-    
-    # Check if exists first
-    c.execute("SELECT * FROM expenses WHERE id=?", (expense_id,))
+    c.execute("SELECT id FROM expenses WHERE id=%s", (expense_id,))
     if not c.fetchone(): 
         conn.close()
-        return "❌ Error: ID not found."
-        
-    c.execute("DELETE FROM expenses WHERE id=?", (expense_id,))
+        return "❌ ID not found."
+    c.execute("DELETE FROM expenses WHERE id=%s", (expense_id,))
     conn.commit()
     conn.close()
-    return f"🗑️ Deleted Expense ID #{expense_id}"
+    return f"🗑️ Deleted ID #{expense_id}"
 
-# --- TOOL 4: UPDATE (Requires ID) ---
+# --- TOOL 4: UPDATE ---
 @mcp.tool()
 def update_expense(expense_id: int, field: str, new_value: str) -> str:
-    """Updates a field (amount, description, date) for a specific ID."""
-    allowed_fields = ['amount', 'description', 'main_category', 'sub_category', 'date']
-    if field not in allowed_fields:
-        return f"❌ Error: Cannot edit '{field}'. Allowed: {allowed_fields}"
-
+    """Updates field (amount, description, date)."""
+    allowed = ['amount', 'description', 'main_category', 'sub_category', 'date']
+    if field not in allowed: return "❌ Invalid field."
+    
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute(f"UPDATE expenses SET {field} = ? WHERE id = ?", (new_value, expense_id))
+    c.execute(f"UPDATE expenses SET {field} = %s WHERE id = %s", (new_value, expense_id))
     conn.commit()
     conn.close()
-    return f"✅ Updated ID #{expense_id}: {field} -> {new_value}"
+    return f"✅ Updated ID #{expense_id}"
 
 if __name__ == "__main__":
     mcp.run()
