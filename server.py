@@ -45,7 +45,7 @@ except Exception as e:
 def analyze_database(query: str) -> str:
     """Read-only SQL analysis. Table: expenses."""
     cleaned = query.strip().upper()
-    if not cleaned.startswith("SELECT"): return "❌ Error: Read-only access."
+    if not cleaned.startswith("SELECT"): return "Error: Read-only access."
     if "LIMIT" not in cleaned: query += " LIMIT 20"
 
     try:
@@ -57,7 +57,7 @@ def analyze_database(query: str) -> str:
         
         if not rows: return "No results."
         
-        results = f"🔍 Found {len(rows)} rows:\n"
+        results = f"Found {len(rows)} rows:\n"
         if rows:
             cols = rows[0].keys()
             results += " | ".join(cols) + "\n" + "-"*50 + "\n"
@@ -65,7 +65,7 @@ def analyze_database(query: str) -> str:
                 results += " | ".join(str(row[c]) for c in cols) + "\n"
         return results
     except Exception as e:
-        return f"❌ SQL Error: {e}"
+        return f"SQL Error: {e}"
 
 # --- TOOL 2: ADD ---
 @mcp.tool()
@@ -80,7 +80,7 @@ def add_expense(amount: float, main_category: str, sub_category: str, descriptio
     eid = c.fetchone()[0]
     conn.commit()
     conn.close()
-    return f"✅ Saved ID #{eid}: ₹{amount} for {description}"
+    return f"Saved ID #{eid}: {amount} for {description}"
 
 # --- TOOL 3: DELETE ---
 @mcp.tool()
@@ -91,25 +91,25 @@ def delete_expense(expense_id: int) -> str:
     c.execute("SELECT id FROM expenses WHERE id=%s", (expense_id,))
     if not c.fetchone(): 
         conn.close()
-        return "❌ ID not found."
+        return "ID not found."
     c.execute("DELETE FROM expenses WHERE id=%s", (expense_id,))
     conn.commit()
     conn.close()
-    return f"🗑️ Deleted ID #{expense_id}"
+    return f"Deleted ID #{expense_id}"
 
 # --- TOOL 4: UPDATE ---
 @mcp.tool()
 def update_expense(expense_id: int, field: str, new_value: str) -> str:
     """Updates field (amount, description, date)."""
     allowed = ['amount', 'description', 'main_category', 'sub_category', 'date']
-    if field not in allowed: return "❌ Invalid field."
+    if field not in allowed: return "Invalid field."
     
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(f"UPDATE expenses SET {field} = %s WHERE id = %s", (new_value, expense_id))
     conn.commit()
     conn.close()
-    return f"✅ Updated ID #{expense_id}"
+    return f"Updated ID #{expense_id}"
 
 if __name__ == "__main__":
     mcp.run()
