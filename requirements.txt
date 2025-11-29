@@ -7,3 +7,4 @@ plotly
 python-dotenv
 psycopg2-binary
 uvicorn
+bcrypt

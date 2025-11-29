@@ -7,80 +7,147 @@ import datetime
 import pandas as pd
 import plotly.express as px
 import psycopg2
+import bcrypt
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-# --- CONFIG ---
-st.set_page_config(page_title="FinAI Pro", layout="wide")
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Financial Analytics", layout="wide")
+load_dotenv()
 
-# Styling
+# --- CSS STYLING ---
 st.markdown("""
 <style>
+    .stButton>button {width: 100%; border-radius: 4px;}
+    div[data-testid="stMetric"] {
+        background-color: #262730; 
+        border: 1px solid #4a4a4a;
+        border-radius: 4px; 
+        padding: 10px;
+    }
     header {visibility: hidden;}
-    .main {background-color: #0E1117;}
-    div[data-testid="stMetric"] {background-color: #262730; border: 1px solid #41424C; border-radius: 5px; padding: 15px;}
-    .stChatInput {border-radius: 10px;}
 </style>
 """, unsafe_allow_html=True)
 
-load_dotenv()
+# --- ENVIRONMENT VARIABLES ---
 API_KEY = os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# ⚠️ ENSURE THIS IS YOUR RENDER URL (ending in /sse)
+# UPDATE THIS WITH YOUR RENDER URL
 SERVER_URL = "https://expensetracker-backend-cjxj.onrender.com/sse" 
 
 if not API_KEY or not DATABASE_URL:
-    st.error("Critical Error: Missing secrets.")
+    st.error("Configuration Error: Missing Secrets.")
     st.stop()
+
+# --- SESSION MANAGEMENT ---
+if "user_id" not in st.session_state: st.session_state.user_id = None
+if "username" not in st.session_state: st.session_state.username = None
+if "messages" not in st.session_state: st.session_state.messages = []
+
+# --- AUTHENTICATION HELPERS ---
+def login_user(username, password):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        c = conn.cursor()
+        c.execute("SELECT id, password_hash FROM users WHERE username = %s", (username,))
+        user = c.fetchone()
+        conn.close()
+        
+        if user and bcrypt.checkpw(password.encode('utf-8'), bytes(user[1])):
+            return user[0] 
+    except Exception as e:
+        st.error(f"Database connection error: {e}")
+    return None
+
+def register_user_direct(username, password):
+    try:
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        conn = psycopg2.connect(DATABASE_URL)
+        c = conn.cursor()
+        c.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", (username, hashed))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        return False
+
+# ==========================================
+# AUTHENTICATION VIEW
+# ==========================================
+if not st.session_state.user_id:
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        st.title("Secure Login")
+        tab1, tab2 = st.tabs(["Login", "Register"])
+        
+        with tab1:
+            l_user = st.text_input("Username", key="l_u")
+            l_pass = st.text_input("Password", type="password", key="l_p")
+            if st.button("Log In"):
+                uid = login_user(l_user, l_pass)
+                if uid:
+                    st.session_state.user_id = uid
+                    st.session_state.username = l_user
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials.")
+        
+        with tab2:
+            r_user = st.text_input("New Username", key="r_u")
+            r_pass = st.text_input("New Password", type="password", key="r_p")
+            if st.button("Create Account"):
+                if register_user_direct(r_user, r_pass):
+                    st.success("Account created successfully. Please log in.")
+                else:
+                    st.error("Username already exists.")
+    st.stop() 
+
+# ==========================================
+# MAIN DASHBOARD VIEW
+# ==========================================
 
 # Load Categories
 try:
     with open("categories.json", "r") as f:
         CATEGORIES_STR = json.dumps(json.load(f), indent=2)
 except:
-    st.error("Error: categories.json not found. Please ensure the file is in the root folder.")
-    st.stop()
+    CATEGORIES_STR = "General, Food, Transport, Utilities"
 
-# --- SIDEBAR ---
-def load_data():
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        df = pd.read_sql("SELECT * FROM expenses ORDER BY date DESC", conn)
-        conn.close()
-        df['date'] = pd.to_datetime(df['date'])
-        return df
-    except:
-        return pd.DataFrame()
-
+# Sidebar
 with st.sidebar:
-    st.title("Dashboard")
-    df = load_data()
+    st.write(f"User: **{st.session_state.username}**")
+    if st.button("Log Out"):
+        st.session_state.user_id = None
+        st.rerun()
+    
+    st.markdown("---")
+    
+    conn = psycopg2.connect(DATABASE_URL)
+    df = pd.read_sql("SELECT * FROM expenses WHERE user_id = %s ORDER BY date DESC", conn, params=(st.session_state.user_id,))
+    conn.close()
     
     if not df.empty:
-        col1, col2 = st.columns(2)
-        col1.metric("Spent", f"₹{df['amount'].sum():,.0f}")
-        col2.metric("Txns", len(df))
-        st.markdown("---")
-        fig = px.pie(df, values='amount', names='main_category', hole=0.4, 
+        st.metric("Total Expenditure", f"INR {df['amount'].sum():,.2f}")
+        
+        st.subheader("Distribution")
+        fig = px.pie(df, values='amount', names='main_category', hole=0.4,
                      color_discrete_sequence=px.colors.qualitative.Pastel)
         fig.update_traces(textposition='inside', textinfo='percent+label')
         fig.update_layout(showlegend=False, margin=dict(t=0,b=0,l=0,r=0), height=250, paper_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig)
-        
-    if st.button("Refresh Data"): st.rerun()
+    else:
+        st.info("No data available.")
 
-# --- CHAT ---
-st.title("Financial Assistant")
+# Chat Interface
+st.title("Financial Analytics Assistant")
 
-if "messages" not in st.session_state: st.session_state.messages = []
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-async def run_agent(user_prompt):
+async def run_agent(user_prompt, uid):
     async with sse_client(SERVER_URL) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -92,17 +159,19 @@ async def run_agent(user_prompt):
             client = genai.Client(api_key=API_KEY)
             today = datetime.datetime.now().strftime("%Y-%m-%d")
             
-            # --- THE FIX: STRICTER RULES ---
+            # System Prompt with User Context
             sys_instr = f"""
-            You are a Financial Data Analyst. DATE: {today} | CURRENCY: INR
+            You are a Financial Data Analyst acting for User ID: {uid}.
+            DATE: {today} | CURRENCY: INR
             
-            CRITICAL RULES:
-            1. **NEVER ASK CLARIFYING QUESTIONS.** If the category is unclear, GUESS the best match.
-            2. If you absolutely cannot guess, use 'misc' -> 'uncategorized'.
-            3. ACTION: Call `add_expense` IMMEDIATELY when given an amount and item.
-            4. READ: Use `analyze_database` for queries.
+            OPERATIONAL RULES:
+            1. DATA ACCESS: Use `get_user_data(user_id={uid})`. Do not assume data exists.
+            2. DATA ENTRY: Use `add_expense(user_id={uid}, ...)`.
+            3. DATA REMOVAL: Use `delete_expense(user_id={uid}, ...)`.
+            4. CATEGORIZATION: Map inputs strictly to the provided category list.
             
-            VALID CATEGORIES: {CATEGORIES_STR}
+            CATEGORY LIST:
+            {CATEGORIES_STR}
             """
 
             history = []
@@ -121,15 +190,15 @@ async def run_agent(user_prompt):
                 response = chat.send_message(parts)
             return response.text
 
-if prompt := st.chat_input("Ex: 'Add 500rs for lunch'"):
+if prompt := st.chat_input("Enter command (e.g., 'Log 500 INR for lunch')"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
     with st.chat_message("assistant"):
         with st.spinner("Processing..."):
             try:
-                res = asyncio.run(run_agent(prompt))
+                res = asyncio.run(run_agent(prompt, st.session_state.user_id))
                 st.markdown(res)
                 st.session_state.messages.append({"role": "assistant", "content": res})
                 st.rerun()
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"System Error: {e}")
