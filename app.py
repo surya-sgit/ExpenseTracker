@@ -2,6 +2,17 @@ import streamlit as st
 import asyncio
 import sys
 import os
+import subprocess 
+
+# --- FORCE INSTALL (The Cheat Code) ---
+try:
+    import psycopg2
+except ImportError:
+    # This forces Streamlit to install the missing library RIGHT NOW
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "psycopg2-binary"])
+    import psycopg2
+
+# ... continue with your other imports ...
 import json
 import datetime
 import pandas as pd
