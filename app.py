@@ -30,7 +30,7 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # ⚠️ REPLACE THIS WITH YOUR DEPLOYED BACKEND URL FROM FASTMCP
-SERVER_URL = "https://your-backend-name.fastmcp.cloud/sse" 
+SERVER_URL = "https://expensetracking.fastmcp.app/mcp" 
 
 if not API_KEY or not DATABASE_URL:
     st.error("❌ Secrets missing (GOOGLE_API_KEY or DATABASE_URL).")
