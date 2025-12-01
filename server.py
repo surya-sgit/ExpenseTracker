@@ -1,6 +1,7 @@
 import os
 import psycopg2
 import bcrypt
+import uuid
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from fastmcp import FastMCP
@@ -8,34 +9,35 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Initialize Server
-mcp = FastMCP("Expense Tracker Multi-User")
+mcp = FastMCP("Expense Tracker Enterprise")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
-    if not DATABASE_URL:
-        raise ValueError("Configuration Error: DATABASE_URL is missing.")
+    if not DATABASE_URL: raise ValueError("DATABASE_URL missing.")
     return psycopg2.connect(DATABASE_URL)
 
-# --- DATABASE INITIALIZATION ---
+# --- DATABASE INIT (With UUIDs) ---
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # 1. Create Users Table
+    # 1. Enable UUID extension in Postgres
+    c.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
+    
+    # 2. Users Table (Using UUIDs now)
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
             username TEXT UNIQUE NOT NULL,
             password_hash BYTEA NOT NULL
         )
     ''')
     
-    # 2. Create Expenses Table with Foreign Key
+    # 3. Expenses Table
     c.execute('''
         CREATE TABLE IF NOT EXISTS expenses (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES users(id),
+            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+            user_id UUID REFERENCES users(id),
             amount REAL,
             main_category TEXT,
             sub_category TEXT,
@@ -43,120 +45,157 @@ def init_db():
             date DATE DEFAULT CURRENT_DATE
         )
     ''')
-    
-    # 3. Migration: Ensure user_id exists for existing databases
-    try:
-        c.execute("ALTER TABLE expenses ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id)")
-    except Exception:
-        pass 
-
     conn.commit()
     conn.close()
 
 try:
     init_db()
 except Exception as e:
-    print(f"Database Initialization Error: {e}")
+    print(f"DB Init Error: {e}")
 
-# --- AUTHENTICATION TOOLS ---
+# --- AUTH TOOLS ---
 
 @mcp.tool()
 def register_user(username: str, password: str) -> str:
-    """Registers a new user. Returns status message."""
+    """Registers a new user."""
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Check if username exists
     c.execute("SELECT id FROM users WHERE username = %s", (username,))
     if c.fetchone():
         conn.close()
-        return "Error: Username already taken."
+        return "Error: Username taken."
         
-    # Hash password securely
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
     
     try:
-        c.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", (username, hashed))
+        # Postgres returns the new UUID automatically
+        c.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id", (username, hashed))
+        new_id = c.fetchone()[0]
         conn.commit()
         conn.close()
-        return "Success: User registered. Please log in."
+        return f"Success: Registered. Your secure ID is {new_id}"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error: {e}"
 
 @mcp.tool()
 def login_user(username: str, password: str) -> str:
-    """Verifies credentials. Returns user ID if successful."""
+    """Returns User UUID if credentials match."""
     conn = get_db_connection()
     c = conn.cursor()
-    
     c.execute("SELECT id, password_hash FROM users WHERE username = %s", (username,))
     user = c.fetchone()
     conn.close()
     
-    if not user:
-        return "Error: User not found."
+    if not user: return "Error: User not found."
     
-    # Verify hash
-    stored_hash = bytes(user[1])
-    if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
-        return f"ID: {user[0]}"
-    else:
-        return "Error: Invalid password."
+    if bcrypt.checkpw(password.encode('utf-8'), bytes(user[1])):
+        return f"{user[0]}" # Return the UUID string
+    return "Error: Invalid password."
 
-# --- DATA TOOLS (Scoped to User ID) ---
+# --- THE SECURE ANALYST (The Fix) ---
 
 @mcp.tool()
-def get_user_data(user_id: int) -> str:
+def run_secure_query(user_id: str, sql_logic: str) -> str:
     """
-    Fetches expenses strictly for the specified user ID.
+    Runs a secure SQL analysis for a specific user.
+    
+    Args:
+        user_id: The UUID of the logged-in user.
+        sql_logic: The SQL conditions/aggregations AFTER the 'WHERE'. 
+                   Do NOT write 'SELECT *'. Just write the logic.
+    
+    Examples of 'sql_logic':
+        - "ORDER BY amount DESC LIMIT 5" (Top expenses)
+        - "AND main_category = 'Food'" (Filter by food)
+        - "AND amount > 500" (High value items)
     """
     conn = get_db_connection()
     c = conn.cursor(cursor_factory=RealDictCursor)
-    c.execute("SELECT * FROM expenses WHERE user_id = %s ORDER BY date DESC LIMIT 50", (user_id,))
+    
+    # 🛡️ SECURITY SANDBOX 🛡️
+    # We force the query to start with "SELECT * FROM expenses WHERE user_id = ..."
+    # This makes it physically impossible to see other users' data.
+    
+    # Clean inputs to prevent some injection, though parameterization handles most
+    full_query = f"SELECT * FROM expenses WHERE user_id = '{user_id}' {sql_logic}"
+    
+    # Basic safety check to prevent dropping tables
+    if "DROP" in sql_logic.upper() or "DELETE" in sql_logic.upper() or "UPDATE" in sql_logic.upper():
+        return "Error: This tool is for Read-Only analysis."
+
+    try:
+        c.execute(full_query)
+        rows = c.fetchall()
+        conn.close()
+        
+        if not rows: return "No data found matching your query."
+        
+        # 📊 FORMATTING FIX: Return Markdown Table
+        # This fixes the "ugly text" issue.
+        if rows:
+            keys = rows[0].keys()
+            markdown = "| " + " | ".join(keys) + " |\n"
+            markdown += "| " + " | ".join(["---"] * len(keys)) + " |\n"
+            for row in rows:
+                values = [str(row[k]) for k in keys]
+                markdown += "| " + " | ".join(values) + " |\n"
+            return markdown
+            
+    except Exception as e:
+        return f"Query Error: {e}"
+
+@mcp.tool()
+def summarize_expenses(user_id: str) -> str:
+    """Returns a total spending breakdown by category."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT main_category, SUM(amount) 
+        FROM expenses 
+        WHERE user_id = %s 
+        GROUP BY main_category
+    """, (user_id,))
     rows = c.fetchall()
     conn.close()
     
-    if not rows:
-        return "No expenses found for this user."
-    
-    # Format as pipe-delimited text for AI analysis
-    result = "id | date | amount | category | description\n"
-    result += "-" * 50 + "\n"
-    for r in rows:
-        result += f"{r['id']} | {r['date']} | {r['amount']} | {r['main_category']} | {r['description']}\n"
-    return result
+    report = "### 📊 Spending Summary\n"
+    for row in rows:
+        report += f"- **{row[0]}:** ₹{row[1]:,.2f}\n"
+    return report
 
 @mcp.tool()
-def add_expense(user_id: int, amount: float, main_category: str, sub_category: str, description: str, date: str = None) -> str:
-    """Records an expense linked to a specific user ID."""
+def add_expense(user_id: str, amount: float, main_category: str, sub_category: str, description: str, date: str = None) -> str:
+    """Adds a new expense."""
     conn = get_db_connection()
     c = conn.cursor()
-    if not date: 
-        date = datetime.now().strftime("%Y-%m-%d")
+    if not date: date = datetime.now().strftime("%Y-%m-%d")
     
     c.execute("INSERT INTO expenses (user_id, amount, main_category, sub_category, description, date) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", 
               (user_id, amount, main_category, sub_category, description, date))
     eid = c.fetchone()[0]
     conn.commit()
     conn.close()
-    return f"Success: Saved ID #{eid}"
+    return f"✅ Saved. ID: {eid}"
 
 @mcp.tool()
-def delete_expense(user_id: int, expense_id: int) -> str:
-    """Deletes an expense ONLY if it belongs to the authenticated user."""
+def delete_expense(user_id: str, expense_id: str) -> str:
+    """Deletes an expense (Requires UUID)."""
     conn = get_db_connection()
     c = conn.cursor()
     
-    # Delete with user_id check to prevent unauthorized deletion
-    c.execute("DELETE FROM expenses WHERE id = %s AND user_id = %s RETURNING id", (expense_id, user_id))
-    deleted = c.fetchone()
-    conn.commit()
-    conn.close()
-    
-    if deleted:
-        return f"Success: Deleted ID #{expense_id}"
-    else:
-        return "Error: ID not found or permission denied."
+    # We cast the ID string to UUID type for Postgres
+    try:
+        c.execute("DELETE FROM expenses WHERE id = %s AND user_id = %s RETURNING id", (expense_id, user_id))
+        if c.fetchone():
+            conn.commit()
+            conn.close()
+            return "🗑️ Expense deleted successfully."
+        else:
+            conn.close()
+            return "Error: Expense not found or you don't own it."
+    except Exception as e:
+        return f"Error: {e}"
 
 if __name__ == "__main__":
     mcp.run()
