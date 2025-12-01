@@ -117,51 +117,60 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
 async def run_agent(user_prompt, uid):
-    async with sse_client(SERVER_URL) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            
-            tools = await session.list_tools()
-            f_decls = [types.FunctionDeclaration(name=t.name, description=t.description, parameters=t.inputSchema) for t in tools.tools]
-            gemini_tools = [types.Tool(function_declarations=f_decls)]
-            client = genai.Client(api_key=API_KEY)
-            
-            # System Prompt with User Context
-            sys_instr = f"""
-            You are a Financial Data Analyst acting for User ID: {uid}.
-            DATE: {today} | CURRENCY: INR
-            
-            OPERATIONAL RULES:
-            1. DATA ACCESS: Use `run_secure_query` for complex filtering or `summarize_expenses`.
-            2. DATA ENTRY: Use `add_expense`.
-            3. DATA REMOVAL: Use `delete_expense`.
-            4. CATEGORIZATION: Map inputs strictly to the provided category list.
-            
-            CRITICAL FORMATTING RULE:
-            - The tools return data formatted as Markdown Tables.
-            - **DO NOT** wrap the table in code blocks (triple backticks ```). 
-            - Output the table strictly as **RAW MARKDOWN** so it renders visually.
-            
-            CATEGORY LIST:
-            {CATEGORIES_STR}
-            """
+    try:
+        # Increase timeout (default is usually too short for free tier)
+        # Note: We rely on the context manager's internal handling, but we wrap it 
+        # in a big try/except block to handle the 'TaskGroup' crash gracefully.
+        
+        async with sse_client(SERVER_URL) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                
+                tools = await session.list_tools()
+                f_decls = [types.FunctionDeclaration(name=t.name, description=t.description, parameters=t.inputSchema) for t in tools.tools]
+                gemini_tools = [types.Tool(function_declarations=f_decls)]
 
-            history = []
-            for m in st.session_state.messages[:-1]:
-                role = "model" if m["role"]=="assistant" else "user"
-                history.append(types.Content(role=role, parts=[types.Part.from_text(text=str(m["content"]))]))
+                client = genai.Client(api_key=API_KEY)
+                today = datetime.datetime.now().strftime("%Y-%m-%d")
+                
+                sys_instr = f"""
+                You are a Financial Data Analyst acting for User ID: {uid}.
+                DATE: {today} | CURRENCY: INR
+                
+                OPERATIONAL RULES:
+                1. DATA ACCESS: Use `run_secure_query` for complex filtering or `summarize_expenses`.
+                2. DATA ENTRY: Use `add_expense`.
+                3. DATA REMOVAL: Use `delete_expense`.
+                4. CATEGORIZATION: Map inputs strictly to the provided category list.
+                
+                CRITICAL FORMATTING RULE:
+                - The tools return data formatted as Markdown Tables.
+                - **DO NOT** wrap the table in code blocks (triple backticks ```). 
+                - Output the table strictly as **RAW MARKDOWN**.
+                
+                CATEGORY LIST:
+                {CATEGORIES_STR}
+                """
 
-            chat = client.chats.create(model="gemini-2.0-flash", config=types.GenerateContentConfig(tools=gemini_tools, system_instruction=sys_instr), history=history)
-            response = chat.send_message(user_prompt)
+                history = []
+                for m in st.session_state.messages[:-1]:
+                    role = "model" if m["role"]=="assistant" else "user"
+                    history.append(types.Content(role=role, parts=[types.Part.from_text(text=str(m["content"]))]))
 
-            while response.function_calls:
-                parts = []
-                for call in response.function_calls:
-                    res = await session.call_tool(call.name, arguments=call.args)
-                    parts.append(types.Part.from_function_response(name=call.name, response={"result": res.content[0].text}))
-                response = chat.send_message(parts)
-            return response.text
+                chat = client.chats.create(model="gemini-2.0-flash", config=types.GenerateContentConfig(tools=gemini_tools, system_instruction=sys_instr), history=history)
+                response = chat.send_message(user_prompt)
 
+                while response.function_calls:
+                    parts = []
+                    for call in response.function_calls:
+                        res = await session.call_tool(call.name, arguments=call.args)
+                        parts.append(types.Part.from_function_response(name=call.name, response={"result": res.content[0].text}))
+                    response = chat.send_message(parts)
+                return response.text
+
+    except Exception as e:
+        # This catches the TaskGroup error and prints a helpful message
+        return f"⚠️ **Connection Error:** Could not talk to the Backend.\n\nPossible reasons:\n1. The Render server is sleeping (Wait 30s and try again).\n2. The URL in `app.py` is wrong.\n\n*Technical Details: {e}*"
 if prompt := st.chat_input("Ex: 'Show my highest expense'"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
