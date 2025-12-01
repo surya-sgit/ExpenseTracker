@@ -20,7 +20,7 @@ load_dotenv()
 
 API_KEY = os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-# ⚠️ UPDATE THIS URL AFTER DEPLOYING SERVER
+#  UPDATE THIS URL AFTER DEPLOYING SERVER
 SERVER_URL = "https://expensetracker-backend-cjxj.onrender.com/sse" 
 
 # --- STYLING ---

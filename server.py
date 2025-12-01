@@ -113,7 +113,7 @@ def run_secure_query(user_id: str, sql_logic: str) -> str:
     conn = get_db_connection()
     c = conn.cursor(cursor_factory=RealDictCursor)
     
-    # 🛡️ SECURITY SANDBOX 🛡️
+    # SECURITY SANDBOX 
     # We force the query to start with "SELECT * FROM expenses WHERE user_id = ..."
     # This makes it physically impossible to see other users' data.
     
@@ -131,7 +131,7 @@ def run_secure_query(user_id: str, sql_logic: str) -> str:
         
         if not rows: return "No data found matching your query."
         
-        # 📊 FORMATTING FIX: Return Markdown Table
+        # FORMATTING FIX: Return Markdown Table
         # This fixes the "ugly text" issue.
         if rows:
             keys = rows[0].keys()
@@ -159,7 +159,7 @@ def summarize_expenses(user_id: str) -> str:
     rows = c.fetchall()
     conn.close()
     
-    report = "### 📊 Spending Summary\n"
+    report = "###  Spending Summary\n"
     for row in rows:
         report += f"- **{row[0]}:** ₹{row[1]:,.2f}\n"
     return report
@@ -176,7 +176,7 @@ def add_expense(user_id: str, amount: float, main_category: str, sub_category: s
     eid = c.fetchone()[0]
     conn.commit()
     conn.close()
-    return f"✅ Saved. ID: {eid}"
+    return f" Saved. ID: {eid}"
 
 @mcp.tool()
 def delete_expense(user_id: str, expense_id: str) -> str:
@@ -190,7 +190,7 @@ def delete_expense(user_id: str, expense_id: str) -> str:
         if c.fetchone():
             conn.commit()
             conn.close()
-            return "🗑️ Expense deleted successfully."
+            return " Expense deleted successfully."
         else:
             conn.close()
             return "Error: Expense not found or you don't own it."
