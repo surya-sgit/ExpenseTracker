@@ -87,8 +87,12 @@ if not st.session_state.user_id:
 
 # --- MAIN APP ---
 try:
-    with open("categories.json", "r") as f: CAT_STR = json.dumps(json.load(f))
-except: CAT_STR = "General"
+    with open("categories.json", "r") as f:
+        # 1. json.load(f) reads the file as a Python Dictionary
+        # 2. json.dumps(...) converts it back into a formatted TEXT STRING
+        CATEGORIES_STR = json.dumps(json.load(f), indent=2)
+except:
+    CATEGORIES_STR = "General, Food, Transport, Utilities"
 
 with st.sidebar:
     st.write(f"User: **{st.session_state.username}**")
@@ -122,26 +126,24 @@ async def run_agent(user_prompt, uid):
             gemini_tools = [types.Tool(function_declarations=f_decls)]
             client = genai.Client(api_key=API_KEY)
             
-            # --- THE ANALYST PROMPT ---
+            # System Prompt with User Context
             sys_instr = f"""
-            You are an Expert Financial Analyst for User UUID: {uid}.
-            CURRENCY: INR.
+            You are a Financial Data Analyst acting for User ID: {uid}.
+            DATE: {today} | CURRENCY: INR
             
-            YOUR TOOLS:
-            1. `run_secure_query(user_id, sql_logic)`: 
-               - Use this for complex questions (Highest, Lowest, Averages, Filtering).
-               - The `sql_logic` is appended to: "SELECT * FROM expenses WHERE user_id = '{uid}' ..."
-               - Ex: "Show highest expense" -> sql_logic="ORDER BY amount DESC LIMIT 1"
+            OPERATIONAL RULES:
+            1. DATA ACCESS: Use `run_secure_query` for complex filtering or `summarize_expenses`.
+            2. DATA ENTRY: Use `add_expense`.
+            3. DATA REMOVAL: Use `delete_expense`.
+            4. CATEGORIZATION: Map inputs strictly to the provided category list.
             
-            2. `summarize_expenses(user_id)`: Use for "Spending breakdown" or "Summary".
+            CRITICAL FORMATTING RULE:
+            - The tools return data formatted as Markdown Tables.
+            - **DO NOT** wrap the table in code blocks (triple backticks ```). 
+            - Output the table strictly as **RAW MARKDOWN** so it renders visually.
             
-            3. `add_expense`: Call immediately if details provided.
-            
-            4. `delete_expense`: Requires UUID. Search first to find it.
-            
-            FORMATTING:
-            - The database returns MARKDOWN TABLES. Display them directly.
-            - Do not ask clarifying questions. Guess the category from: {CAT_STR}
+            CATEGORY LIST:
+            {CATEGORIES_STR}
             """
 
             history = []
