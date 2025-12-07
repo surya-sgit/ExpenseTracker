@@ -1,12 +1,12 @@
 streamlit
 google-genai
-mcp==1.0.0
-fastmcp==0.1.3
+mcp
+fastmcp
 pandas
 plotly
 python-dotenv
 psycopg2-binary
 uvicorn
-httpx==0.27.0
+httpx
 anyio
 bcrypt
