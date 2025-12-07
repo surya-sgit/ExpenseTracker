@@ -202,8 +202,21 @@ async def run_agent(user_prompt, uid):
                 return response.text
 
     except Exception as e:
-        return f"**Connection Error:** The backend server timed out or is unreachable.\n\n*Technical Details:* {e}"
-
+        # ERROR UNWRAPPER
+        # This digs into the TaskGroup to find the ACTUAL error
+        real_error = e
+        if hasattr(e, 'exceptions'):
+            real_error = e.exceptions[0]  # Get the first internal error
+            
+        return f"""
+         **Connection Failed**
+        
+        **Real Error Type:** `{type(real_error).__name__}`
+        **Error Details:** `{real_error}`
+        
+        *Debug Info:*
+        - Server URL: `{SERVER_URL}`
+        """
 if prompt := st.chat_input("Enter command (e.g., 'Log 500 INR for lunch')"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
