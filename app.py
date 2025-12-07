@@ -143,7 +143,7 @@ with st.sidebar:
         st.info("No data available.")
 
 # Chat Interface
-st.title("Financial Analytics Assistant")
+st.title("Expense Tracker")
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
