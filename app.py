@@ -36,7 +36,7 @@ st.markdown("""
 # --- ENVIRONMENT VARIABLES ---
 API_KEY = os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-# UPDATE THIS WITH YOUR RENDER URL
+# Ensure this matches your live Render URL
 SERVER_URL = "https://expensetracker-backend-cjxj.onrender.com/sse" 
 
 if not API_KEY or not DATABASE_URL:
@@ -143,7 +143,7 @@ with st.sidebar:
         st.info("No data available.")
 
 # Chat Interface
-st.title("Expense Tracker")
+st.title("Financial Analytics Assistant")
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
@@ -202,21 +202,9 @@ async def run_agent(user_prompt, uid):
                 return response.text
 
     except Exception as e:
-        # ERROR UNWRAPPER
-        # This digs into the TaskGroup to find the ACTUAL error
-        real_error = e
-        if hasattr(e, 'exceptions'):
-            real_error = e.exceptions[0]  # Get the first internal error
-            
-        return f"""
-         **Connection Failed**
-        
-        **Real Error Type:** `{type(real_error).__name__}`
-        **Error Details:** `{real_error}`
-        
-        *Debug Info:*
-        - Server URL: `{SERVER_URL}`
-        """
+        # Professional Error Message
+        return f"⚠️ **Network Error:** Could not connect to the backend server. It might be sleeping or restarting. Please try again in 30 seconds."
+
 if prompt := st.chat_input("Enter command (e.g., 'Log 500 INR for lunch')"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
