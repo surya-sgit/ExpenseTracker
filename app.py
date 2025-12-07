@@ -1,3 +1,4 @@
+import httpx
 import streamlit as st
 import asyncio
 import sys
@@ -117,6 +118,9 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
 async def run_agent(user_prompt, uid):
+    # DEFINE CUSTOM TIMEOUT (60 seconds instead of default 5)
+    # This gives Render time to wake up without crashing Streamlit
+    timeout_config = httpx.Timeout(60.0, connect=60.0, read=60.0)
     try:
         # Increase timeout (default is usually too short for free tier)
         # Note: We rely on the context manager's internal handling, but we wrap it 
